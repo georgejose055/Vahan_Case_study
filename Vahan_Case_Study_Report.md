@@ -1,43 +1,86 @@
 # Vahan — Product Analytics Internship Case Study
-**Candidate:** George | **Dataset:** 18,198 leads, one row per lead | **Target metric:** First Trip (FT) conversion
+**Candidate:** George Jose  
+**Dataset:** 18,198 leads, one row per lead  
+**Target metric:** First Trip (FT) conversion  
+**Submission Date:** August 2026
 
 ---
 
 ## Executive Summary
 
-Across all three tasks, one theme keeps surfacing: FT conversion is rare (0.297% base rate) and concentrated in a handful of cohorts. The top three cohorts by FT rate all exceed 1,400 leads and convert at roughly 3x the base rate, and the fastest-to-first-attempt cohorts dominate — speed and cohort choice matter far more than call volume or expressed interest. Because FT conversion is so rare, accuracy alone is a misleading yardstick; the model and the ranking both need to be read through a "how much does this actually cost/move the business" lens. The practical takeaway: prioritize high-FT cohorts, follow up fast after upload, and treat interest as a leading indicator, not a conversion signal.
+FT conversion in this dataset is extremely rare, at a base rate of **0.297%** — only about 54 positive cases across 18,198 leads. The single clearest theme across all three parts of the analysis is that **cohort quality and speed to first attempt** drive conversion far more than call volume or expressed interest. The top three cohorts by FT rate all exceed 1,400 leads and convert at roughly 3x the dataset average, while the largest cohort by volume (OLX, 5,182 leads) converts at a fraction of that rate. For the machine learning model, accuracy is a misleading headline number at this class ratio — the meaningful signals are recall, precision, and what each error type costs the business. The practical takeaway: prioritise high-FT cohorts, follow up fast after upload, and treat "Interested" as a leading indicator at best — not a conversion signal.
 
 ---
 
-## Part 1: Top 3 Best-Performing Cohorts
+## 1. Problem Context
 
-**Metric decision.** I ranked cohorts by FT rate (`FT_after_upload / Uploaded Leads`) rather than raw FT count. Raw counts reward volume, which would automatically favor the biggest cohorts even if their conversion is poor. Rate normalizes for size and measures what we actually care about: how well a lead source turns *its own* leads into trips.
+Vahan operates a lead-to-driver funnel where leads are uploaded in batches from various sources (cohorts), assigned to telecallers, and worked through a series of funnel stages: Attempted → Connected → Interested → Onboarded → First Trip (FT). The business objective is to maximise the number of leads that complete a First Trip, since FT is the revenue-generating event.
 
-**Volume threshold.** I restricted the ranking to cohorts with **at least 30 uploaded leads**. A cohort with, say, 5 leads and 1 FT shows a 20% FT rate, but that single conversion is noise — you can't act on a sample that small. The 30-lead floor ensures the rates we're ranking are statistically meaningful and stable enough to build operations around.
+The dataset captures 18,198 individual lead records across 16 distinct cohorts, uploaded over a period in July 2026. Each row contains funnel stage indicators and timing metadata. The target variable is `FT_after_upload` — a binary flag indicating whether the lead completed a First Trip after being uploaded.
 
-**Result — top 3 cohorts:**
+### Dataset at a Glance
 
-| Cohort | Leads | FT count | FT rate | Connect rate | Interest rate |
-|---|---|---|---|---|---|
-| Single Referral > 7 days- 24th Jul | 1,500 | 14 | 0.93% | 47.46% | 1.01% |
-| Khanna- 2W 26th Jul | 1,546 | 14 | 0.91% | 41.72% | 3.48% |
-| PreOb-Ob Fees Paid 29th Jul (set 1) | 1,483 | 7 | 0.47% | 45.36% | 15.85% |
+| Property | Value |
+|---|---|
+| Total leads | 18,198 |
+| Unit of analysis | One row per lead |
+| Number of cohorts | 16 |
+| FT-positive leads (total) | ~54 |
+| Overall FT conversion rate | 0.297% |
+| Target variable | `FT_after_upload` (binary) |
 
-**Insight worth flagging:** cohort #3 has a *far* higher interest rate (15.85%) than #1 and #2 (~1–3%), yet a *lower* FT rate. In other words, people in that cohort say "yes, I'm interested" easily but don't convert to actual trips at the same pace. If I were picking top cohorts purely on interest, I'd pick the wrong one. This suggests interest and FT measure different things here: interest reflects early intent, FT reflects actual driver behavior. A strong analysis flags this nuance rather than just printing the top-3 by one number — cohort #1 and #2 are the ones to double down on; cohort #3 is a candidate for deeper investigation into *why* interest doesn't translate into trips.
+The extreme rarity of the positive class (FT) is the single most important data characteristic — it shapes every analytical decision, from cohort ranking methodology to model evaluation.
 
 ---
 
-## Part 2: Aggregation Query
+## 2. Part 1 — Top 3 Best-Performing Cohorts
 
-**Grain decision.** I aggregated at **`lead_source`** (one row per cohort). This is the actionable business unit — leads are acquired by source, and operational decisions (budget allocation, follow-up strategy) are made at this level. A date grain would fragment cohorts across days and make them impossible to compare, while a finer grain (e.g., per phone number) is just the raw data again and adds no analytical value.
+### 2.1 Metric Choice
 
-**Data-hygiene note.** The source column `upload_to_first_attempt_P50 (hrs)` contains spaces and parentheses, which requires backtick/quote escaping depending on SQL dialect — worth standardizing column names to snake_case as a cleanup step.
+Cohorts were ranked by **FT rate**, defined as:
 
-**SQL (assuming table `raw_leads`):**
+```
+FT rate = FT_after_upload / Uploaded Leads × 100
+```
+
+Raw FT count was explicitly **not used** as the ranking metric. Raw counts automatically favour the largest cohorts regardless of conversion quality — OLX, with 5,182 leads, would rank first on count despite a very low FT rate. Rate normalises for cohort size and measures what actually matters: how efficiently each source converts its own leads into trips.
+
+### 2.2 Volume Threshold
+
+A minimum threshold of **30 uploaded leads** was applied before ranking. A cohort of 5 leads with 1 FT shows a 20% FT rate, but that rate is noise rather than signal — a single lead difference shifts the percentage dramatically. The 30-lead floor ensures that every ranked cohort has a statistically stable and operationally meaningful rate estimate.
+
+### 2.3 Results
+
+| Rank | Cohort | Leads | FT Count | FT Rate | Connect Rate | Interest Rate | Median Hrs to Attempt |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | Single Referral > 7 days- 24th Jul | 1,500 | 14 | 0.93% | 47.46% | 1.01% | 48.5 hrs |
+| 2 | Khanna- 2W 26th Jul | 1,546 | 14 | 0.91% | 41.72% | 3.48% | 15.0 hrs |
+| 3 | PreOb-Ob Fees Paid 29th Jul (set 1) | 1,483 | 7 | 0.47% | 45.36% | 15.85% | 15.0 hrs |
+
+### 2.4 Key Insight — Interest ≠ Conversion
+
+Cohort #3 has a far higher interest rate (15.85%) than cohorts #1 and #2 (~1–3%), yet it converts at a lower FT rate. This decoupling is important: expressed interest reflects early-funnel intent, while FT reflects actual driver behaviour. An analyst who sorted by interest rate would select a lower-performing cohort over a higher-performing one. The data makes clear that **interest is a weak proxy for FT conversion** — a finding that is reinforced again in the machine learning results.
+
+Cohort #1 (Single Referral) stands out particularly: its median time to first attempt is 48.5 hours — much longer than most cohorts — yet it still leads on FT rate. This suggests that the quality of the referral itself is the dominant signal, and that these leads convert even when follow-up is slower. Cohort #2 (Khanna 2W) follows up in 15 hours and achieves a near-identical FT rate, suggesting faster follow-up compensates for lower lead quality.
+
+---
+
+## 3. Part 2 — Aggregation Query
+
+### 3.1 Grain Decision
+
+The aggregation is performed at the **`lead_source`** level — one row per cohort. This is the correct business grain because:
+
+- Leads are acquired and managed by source
+- Budget allocation, team assignments, and follow-up strategy decisions are made at the cohort level
+- A date grain would fragment the same cohort across multiple days and make cross-cohort comparison impossible
+- A lead-level grain would simply replicate the raw data without adding analytical value
+
+### 3.2 SQL Query
 
 ```sql
 SELECT
-    lead_source AS leadsource,
+    lead_source,
     COUNT(*) AS total_leads,
     SUM(Attempted) AS attempted,
     SUM(Connected) AS connected,
@@ -53,67 +96,189 @@ GROUP BY lead_source
 ORDER BY ft_rate_pct DESC;
 ```
 
-**Aggregated output — sample rows (top and bottom performers):**
+> **Data hygiene note:** The column `upload_to_first_attempt_P50 (hrs)` contains spaces and parentheses and requires backtick or quote escaping depending on the SQL dialect. Standardising column names to `snake_case` is recommended for production use.
 
-| lead_source | total_leads | attempted | connected | interested | onboarded | ft_count | ft_rate_pct | connect_rate_pct | interest_rate_pct |
-|---|---|---|---|---|---|---|---|---|---|
-| Single Referral > 7 days- 24th Jul | 1,500 | 1,454 | 690 | 7 | 30 | 14 | 0.93 | 47.46 | 1.01 |
-| Khanna- 2W 26th Jul | 1,546 | 1,376 | 574 | 20 | 39 | 14 | 0.91 | 41.72 | 3.48 |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... |
-| 2W3W - 3WAHD - Khanna - 3W - 17 Jul | 495 | 495 | 212 | 7 | 0 | 0 | 0.00 | — | — |
+### 3.3 Full Aggregated Output
 
-**What the table reveals.** There is a wide spread of performance across cohorts. The biggest cohorts are not the best: OLX, for example, contributes 5,182 leads — the largest volume in the dataset — yet converts at a far lower FT rate than the smaller high performers. Large-but-weak cohorts generate a lot of calling effort (attempts/connects) for almost no trips, while lean cohorts like the top two above turn ~1,500 leads into 14 FT each. In plain business terms: volume and conversion diverge, so effort should be re-allocated toward the high-FT-rate cohorts rather than the high-volume ones.
+| Cohort | Leads | Attempted | Connected | Interested | Onboarded | FT Count | FT Rate | Connect Rate | Interest Rate |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Single Referral > 7 days- 24th Jul | 1,500 | 1,454 | 690 | 7 | 30 | 14 | 0.93% | 47.46% | 1.01% |
+| Khanna- 2W 26th Jul | 1,546 | 1,376 | 574 | 20 | 39 | 14 | 0.91% | 41.72% | 3.48% |
+| PreOb-Ob Fees Paid 29th Jul (set 1) | 1,483 | 1,433 | 650 | 103 | 15 | 7 | 0.47% | 45.36% | 15.85% |
+| PreOb-Ob Fees Paid 29th Jul (set 2) | 1,558 | 1,519 | 735 | 122 | 14 | 7 | 0.45% | 48.39% | 16.60% |
+| AI Connected but not Connected by TC- Set 1 | 1,480 | 1,331 | 694 | 29 | 9 | 5 | 0.34% | 52.14% | 4.18% |
+| AI Connected but not Connected by TC- Set 2 | 1,193 | 1,066 | 466 | 26 | 6 | 2 | 0.17% | 43.71% | 5.58% |
+| Khanna AI | 886 | 245 | 137 | 2 | 3 | 1 | 0.11% | 55.92% | 1.46% |
+| OLX - Ashwin - 2W - 17 Jul | 5,182 | 962 | 372 | 9 | 3 | 4 | 0.08% | 38.67% | 2.42% |
+| 2W3W - 3WAHD - Khanna - 3W - 17 Jul | 495 | 495 | 212 | 7 | 0 | 0 | 0.00% | 42.83% | 3.30% |
+| 2W3W - 3WCNG - Khanna - 3W - 17 Jul | 530 | 530 | 291 | 1 | 0 | 0 | 0.00% | 54.91% | 0.34% |
+| 2W3W - 3WEV - Khanna - 3W - 17 Jul | 201 | 201 | 91 | 1 | 0 | 0 | 0.00% | 45.27% | 1.10% |
+| AI Connected band Not Interested | 2,137 | 1,359 | 637 | 21 | 0 | 0 | 0.00% | 46.87% | 3.30% |
+
+### 3.4 What the Table Reveals
+
+The table surfaces a striking **volume-conversion divergence**. OLX is the largest cohort by far (5,182 leads — more than 3× the next largest), yet it converts at just 0.08% FT rate. Several cohorts with fewer than 600 leads produce zero FT conversions despite high connection rates. In contrast, the top two cohorts (each around 1,500 leads) generate 14 FTs each. The operational implication is clear: telecaller effort should be reallocated toward the high-FT-rate cohorts rather than concentrated on the high-volume ones.
 
 ---
 
-## Part 3: ML Model — What Drives FT Conversion
+## 4. Part 3 — Machine Learning Model: Drivers of FT Conversion
 
-**Model setup.** RandomForestClassifier with 200 trees, `max_depth=6`, and `class_weight='balanced'`. Target: `FT_after_upload` (binary). Features: `Attempted`, `Connected`, `Attempt per Lead`, `tag_filled`, `Interested`, `upload_to_first_attempt_P50 (hrs)`, and `lead_source` (label-encoded).
+### 4.1 Model Setup
 
-**Leakage-avoidance decision.** I deliberately **excluded `OB_after_upload` and `FT_after_first_attempt` as features**. Both are downstream of, or directly tied to, the target: `FT_after_first_attempt` essentially reveals the outcome, and `OB_after_upload` is on the path to FT. Including either would give the model the "answer key" and inflate performance that would never hold in production, where we score a lead *before* we know these values. The model predicts from what we know early in the funnel only.
+| Parameter | Value |
+|---|---|
+| Algorithm | RandomForestClassifier |
+| Number of trees | 200 |
+| Max depth | 6 |
+| Class weight | `balanced` |
+| Target variable | `FT_after_upload` (binary) |
+| Train/test split | 75% / 25% (random) |
 
-**Class imbalance — dealt with head-on.** The dataset is 99.70% no-FT / 0.30% FT (only ~54 FT leads in 18,198). This is a textbook severe imbalance, and it's why I will not lean on the 76% accuracy figure:
+### 4.2 Feature Selection and Leakage Avoidance
 
-| | precision | recall | f1-score | support |
-|---|---|---|---|---|
-| **0 (No FT)** | 1.00 | 0.76 | 0.87 | 4,536 |
-| **1 (FT)** | 0.01 | 0.43 | 0.01 | 14 |
-| **accuracy** | | | 0.76 | 4,550 |
+**Features used:**
+- `Attempted`
+- `Connected`
+- `Attempt per Lead`
+- `tag_filled`
+- `Interested`
+- `upload_to_first_attempt_P50 (hrs)`
+- `lead_source` (label-encoded as `leadsource_enc`)
 
-Accuracy is 76% simply because the model can be wrong on *every* FT lead and still be "76% correct" by getting the massive no-FT majority right. That number hides the real story. The meaningful signals are recall (0.43 — the model caught 6 of 14 actual FT leads) and precision (0.01 — most of what it flags as FT is wrong).
+**Features deliberately excluded:**
 
-**Confusion matrix** (rows = actual, columns = predicted):
+`OB_after_upload` and `FT_after_first_attempt` were both excluded to prevent data leakage.
+
+- `FT_after_first_attempt` is essentially a direct indicator of the target — including it would give the model the answer it is supposed to predict.
+- `OB_after_upload` is on the causal path to FT: leads onboard before they take a trip, so this variable is downstream of the feature space but upstream of the target.
+
+Including either would dramatically inflate model performance in training but produce a model that cannot be used in production — because at the point of scoring a new lead, neither value is yet known. The model must predict from information available **at the time of lead upload**, not from information that only becomes available later in the funnel.
+
+### 4.3 Class Imbalance
+
+The dataset is approximately **99.70% no-FT and 0.30% FT**. This is a textbook severe imbalance. The `class_weight='balanced'` parameter adjusts the loss function to penalise misclassification of the minority class more heavily, giving the model a better chance of learning the FT signal despite its rarity.
+
+Even with this adjustment, the imbalance is severe enough that standard accuracy is a misleading headline metric. A model that predicts "no FT" for every lead achieves 99.70% accuracy while being completely useless for the business purpose.
+
+### 4.4 Model Performance
+
+#### Classification Report
+
+| Class | Precision | Recall | F1-score | Support |
+|---|---:|---:|---:|---:|
+| 0 — No FT | 1.00 | 0.76 | 0.87 | 4,536 |
+| 1 — FT | 0.01 | 0.43 | 0.01 | 14 |
+| **Overall accuracy** | | | **0.76** | **4,550** |
+
+**Reading the numbers correctly:**
+
+- **Accuracy (0.76)** is high because the model correctly predicts "no FT" for the vast majority of leads. It is not a useful signal here.
+- **Recall (0.43)** means the model identified 6 out of 14 actual FT leads in the test set. This is the metric that most directly reflects business value — how many real trips we avoided missing.
+- **Precision (0.01)** means that of all the leads flagged as predicted-FT, only 1% actually converted. The model casts a wide net to find the few positives.
+
+#### Confusion Matrix
 
 | | Predicted No FT | Predicted FT |
-|---|---|---|
+|---|---:|---:|
 | **Actual No FT** | 3,465 (TN) | 1,071 (FP) |
 | **Actual FT** | 8 (FN) | 6 (TP) |
 
-**Reading it in business terms.** The two error types have very different costs:
-- **False negatives (8 missed FT leads):** lost driver signups. These are real trips we predicted we wouldn't get, so we never follow up — and each is revenue walking out the door. With FT so rare, *every* missed FT is expensive.
-- **False positives (1,071):** wasted follow-up effort. We chase leads we predict will convert but mostly won't. Because precision is 0.01, chasing *all* predicted-FT leads means calling ~1,077 leads to catch ~6 trips. This is a cost problem, not a lost-revenue problem.
+#### Business Cost Interpretation
 
-Given this asymmetry, the "right" threshold is a business decision: if a follow-up call is cheap and a trip is valuable, we should trade precision for recall and cast a wider net (accept more FPs to catch more FNs).
+The two error types carry fundamentally different costs:
 
-**Feature importances — what actually drives conversion:**
+**False Negatives (8 missed FT leads):** These are actual FT-converting leads that the model labelled as no-FT. The business consequence is a missed follow-up and a lost driver signup. At a 0.30% base rate, every individual FT is a rare and valuable event — each false negative represents a real trip and associated revenue not captured.
 
-| Feature | Importance |
-|---|---|
-| upload_to_first_attempt_P50 (hrs) | 0.319 |
-| lead_source (encoded) | 0.292 |
-| Attempt per Lead | 0.168 |
-| Attempted | 0.142 |
-| tag_filled | 0.039 |
-| Connected | 0.033 |
-| Interested | 0.008 |
+**False Positives (1,071):** These are leads flagged as predicted-FT that did not convert. The business consequence is wasted follow-up effort — telecaller time and call costs spent chasing leads that were unlikely to convert. At precision = 0.01, the model effectively tells you to call ~1,077 leads to recover ~6 trips.
 
-**Plain-English narrative.** Two features dominate: **speed-to-first-attempt (0.319)** and **cohort choice (0.292)**. Together they account for ~61% of predictive power. The story: leads called *fast* after upload convert — the hour we take to make the first call is one of the single biggest levers on FT. Where the lead comes from (lead_source) matters almost as much, consistent with Part 1 showing cohort quality varies wildly. Notably, **`Interested` is nearly useless (0.008)** — expressed interest does almost nothing to predict actual conversion, which echoes the Part 1 insight where the highest-interest cohort had a mid-tier FT rate. Call volume metrics (`Attempted`, `Attempt per Lead`) are mid-tier signals — they matter, but as proxies for persistence/effort, not as the driver. The implication for the team: prioritize which cohorts you push and how fast you call them, before worrying about how many times or whether the lead says "interested."
+**Threshold implication:** The optimal operating threshold is a business decision. If the cost of a wasted follow-up call is low and the value of a driver's first trip is high, the right move is to lower the decision threshold (accept more FPs to reduce FNs). If follow-up capacity is the binding constraint, the threshold should be raised to improve precision at the cost of some recall. The 0.5 default threshold used here is not necessarily the right one for this problem.
+
+### 4.5 Feature Importance
+
+| Feature | Importance | Interpretation |
+|---|---:|---|
+| upload_to_first_attempt_P50 (hrs) | 0.3189 | Speed of first follow-up after upload |
+| leadsource_enc | 0.2918 | Which cohort the lead came from |
+| Attempt per Lead | 0.1676 | How many calls were made per lead |
+| Attempted | 0.1418 | Whether any call was attempted |
+| tag_filled | 0.0389 | Whether the lead record was tagged |
+| Connected | 0.0330 | Whether a connection was made |
+| Interested | 0.0080 | Whether lead expressed interest |
+
+**Together, speed-to-first-attempt and lead source account for ~61% of all predictive power.** The remaining features contribute meaningful but smaller marginal signal.
+
+### 4.6 Plain-English Driver Narrative
+
+**Speed to first attempt (0.319)** is the single most important predictor. Leads contacted quickly after upload are more likely to convert. This aligns with the behavioural intuition: a driver who has just registered their interest and receives a call within minutes is more engaged than one who receives a call days later. Every hour of delay after upload represents a decay in lead quality.
+
+**Lead source / cohort (0.292)** is the second most important feature. Where a lead comes from is nearly as predictive as how fast you call them. This is fully consistent with Part 1 — some cohorts convert at nearly 1% while others convert at close to zero, and the model learns this signal from the data.
+
+**Attempt per Lead (0.168) and Attempted (0.142)** are mid-tier signals. They capture persistence — how hard the team chases a lead. More attempts correlate with more trips, but these are secondary to the quality of the source and the speed of initial contact.
+
+**Interested (0.008)** is nearly irrelevant as a predictive feature. This is the sharpest finding: expressed interest contributes almost nothing to the model's ability to separate FT from no-FT. This directly mirrors the Part 1 insight, where the highest-interest cohort had a lower FT rate than the top two. Interest is a weak and potentially misleading signal — operational decisions should not be made on the basis of this variable alone.
 
 ---
 
-## Limitations & Next Steps
+## 5. Integrated Business Recommendations
 
-- **Class imbalance is the core constraint.** With ~54 FT leads total, the model is starved for positive examples. I'd try **SMOTE/oversampling or cost-sensitive learning** (weight the FT class up beyond the standard `class_weight='balanced'`) to improve recall, and evaluate with precision/recall and a profit-style metric, not accuracy.
-- **Threshold tuning.** The 0.5 default decision boundary isn't the right one here. I'd tune the threshold to reflect the FN/FP cost ratio (missed trip revenue vs. wasted follow-up call) and pick the operating point that maximizes expected value.
-- **More features.** Time-of-day / day-of-week of the call, agent-level performance (who made the call), response outcomes, and follow-up count would all plausibly add signal. Also, cohort creation-date effects (e.g., is a cohort's performance stable or decaying over time?) would strengthen both Parts 1 and 3.
-- **Temporal validation.** I'd split train/test by date rather than randomly, to confirm the model generalizes to cohorts seen after training — random splits over-lean on the exact cohorts in the dataset and can flatter performance.
+The three parts of this analysis tell a consistent story. Taken together, the recommendations are:
+
+1. **Reallocate telecaller effort toward high-FT-rate cohorts.** Single Referral and Khanna 2W convert at ~0.92% FT rate vs. a dataset average of 0.30%. Prioritising these sources over high-volume-but-low-converting ones like OLX would meaningfully increase FT yield from the same team capacity.
+
+2. **Reduce time-to-first-attempt as a primary operational metric.** Speed to first attempt is the single strongest predictor of FT conversion in the model. Setting and monitoring SLAs on how quickly uploaded leads receive their first call is likely to have a measurable positive impact on FT rate.
+
+3. **Do not use "Interested" as a triage or prioritisation signal.** The model assigns it near-zero importance (0.008), and the cohort analysis shows that high-interest cohorts do not reliably produce high FT rates. Interest reflects something real about early intent, but it does not translate to trips.
+
+4. **Tune the decision threshold to business cost.** If the team has the capacity to work ~1,000 predicted-FT leads to recover ~6 real trips, the current threshold is acceptable. If capacity is limited, raising the threshold to improve precision would focus effort on the leads most likely to convert.
+
+5. **Investigate cohort #3 (PreOb-Ob Fees Paid).** Its anomalously high interest rate (15.85%) with a mid-tier FT rate (0.47%) suggests that something specific to this cohort breaks the interest→FT pathway. Understanding why these leads say "yes" but do not complete a trip is a high-value diagnostic question.
+
+---
+
+## 6. Limitations and Next Steps
+
+### Current Limitations
+
+- **Severe class imbalance** — with only ~54 FT-positive leads in 18,198 records, the model is trained on very limited positive signal. Any performance metric should be interpreted with this in mind.
+- **Random train/test split** — the current evaluation randomly assigns 25% of records to the test set. This may overestimate real-world performance if cohort characteristics change over time.
+- **Feature scope** — the model uses only the variables available in the dataset. Many plausible drivers of FT conversion are absent.
+
+### Recommended Next Steps
+
+| Initiative | Expected Impact |
+|---|---|
+| SMOTE or cost-sensitive oversampling | Improve recall on FT-positive leads |
+| Threshold tuning via precision-recall curve | Optimise operating point to business cost ratio |
+| Temporal train/test split (by upload date) | More honest out-of-sample evaluation |
+| Add time-of-day and day-of-week features | Capture call timing effects |
+| Add agent-level performance features | Isolate telecaller quality from lead quality |
+| Track cohort stability over time | Assess whether FT rate is consistent or decaying per cohort |
+
+---
+
+## 7. Technical Appendix
+
+### Tools and Libraries
+
+- **Python 3** — core language
+- **Pandas** — data loading, cleaning, aggregation
+- **Scikit-learn** — RandomForestClassifier, train/test split, classification metrics
+- **Matplotlib / Seaborn** — visualisations (feature importance chart, confusion matrix)
+- **SQL** — Part 2 aggregation query (PostgreSQL-compatible syntax)
+- **Jupyter Notebook** — full analysis and code
+
+### Output Files
+
+| File | Description |
+|---|---|
+| `top3_cohorts.csv` | Top 3 cohorts by FT rate (Part 1) |
+| `aggregated_cohort_table.csv` | Full cohort aggregation (Part 2) |
+| `cohort_summary_full.csv` | Complete cohort summary across all sources |
+| `feature_importance.csv` | Feature importance scores (Part 3) |
+| `feature_importance.jpg` | Feature importance bar chart |
+| `confusion_matrix.jpg` | Model confusion matrix |
+
+---
+
+*George Jose — M.Sc. Data Science, CHRIST University, Bangalore*  
+*GitHub: [georgejose055](https://github.com/georgejose055)*
