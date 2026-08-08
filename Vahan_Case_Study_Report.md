@@ -25,9 +25,12 @@ The dataset captures 18,198 individual lead records across 16 distinct cohorts, 
 | Total leads | 18,198 |
 | Unit of analysis | One row per lead |
 | Number of cohorts | 16 |
-| FT-positive leads (total) | ~54 |
+| FT-positive leads (`FT_after_upload`) | ~54 |
+| FT-positive leads (`FT_after_first_attempt`) | ~17 |
 | Overall FT conversion rate | 0.297% |
 | Target variable | `FT_after_upload` (binary) |
+
+> **Note on FT column divergence:** The dataset contains two FT columns — `FT_after_upload` (54 positives) and `FT_after_first_attempt` (17 positives). These differ by 37 leads. The divergence is expected: `FT_after_upload` counts all leads that eventually completed a First Trip after being uploaded, regardless of when the first call was made. `FT_after_first_attempt` counts only those who converted specifically after the first call attempt. Leads that converted after a second or later attempt are counted in the former but not the latter. All analysis in this report uses `FT_after_upload` as the target, since it is the broader and more operationally complete measure of conversion yield per cohort.
 
 The extreme rarity of the positive class (FT) is the single most important data characteristic — it shapes every analytical decision, from cohort ranking methodology to model evaluation.
 
@@ -98,7 +101,9 @@ ORDER BY ft_rate_pct DESC;
 
 > **Data hygiene note:** The column `upload_to_first_attempt_P50 (hrs)` contains spaces and parentheses and requires backtick or quote escaping depending on the SQL dialect. Standardising column names to `snake_case` is recommended for production use.
 
-### 3.3 Full Aggregated Output
+### 3.3 Aggregated Output (12 of 16 cohorts shown — ≥ 30 leads)
+
+> **Scope note:** The dataset contains 16 cohorts in total. Four cohorts — JobHai (two variants), "50K 2W4", and "50K 2W5" — collectively account for only ~7 leads combined and are excluded from this table because they fall below the 30-lead analytical threshold. They contribute no FT conversions and their per-cohort metrics are not statistically stable. The SQL query above returns all 16 rows; this table filters to the 12 cohorts with ≥ 30 leads for presentation clarity.
 
 | Cohort | Leads | Attempted | Connected | Interested | Onboarded | FT Count | FT Rate | Connect Rate | Interest Rate |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -154,13 +159,23 @@ The table surfaces a striking **volume-conversion divergence**. OLX is the large
 
 Including either would dramatically inflate model performance in training but produce a model that cannot be used in production — because at the point of scoring a new lead, neither value is yet known. The model must predict from information available **at the time of lead upload**, not from information that only becomes available later in the funnel.
 
-### 4.3 Class Imbalance
+### 4.3 Data Quality Issue: `upload_to_first_attempt_P50 (hrs)`
+
+> **Important disclosure:** `upload_to_first_attempt_P50 (hrs)` is the top-ranked feature in this model at importance 0.319 — yet it has significant data quality problems that must be acknowledged before interpreting results.
+>
+> - **29% missing values:** 5,266 of 18,198 rows have no value for this column. These were imputed with the column median before training. Median imputation is a reasonable default but erases real variation — a lead with a missing value may have genuinely not been attempted, or the timestamp may simply be absent due to a logging gap. The model cannot distinguish between these two interpretations.
+>
+> - **8.2% negative values:** 1,496 rows contain negative values, with extremes as low as **-611 hours**. A negative "hours from upload to first attempt" is operationally impossible — it means the system recorded a call attempt *before* the lead was uploaded. This is a data pipeline bug (likely a timezone mismatch or logging order error), not a real signal. These rows were retained for training without correction, which means the model has partially learned from nonsensical timestamps.
+>
+> **What this means for the headline finding:** The conclusion that "speed to first attempt drives FT conversion" is directionally credible — it is consistent with the Part 1 cohort analysis and with general sales operations intuition. However, the specific importance score (0.319) should be treated as an upper bound rather than a precise estimate, because a portion of that signal is drawn from imputed and corrupted values. Cleaning this column — removing negatives, investigating missingness patterns, and distinguishing "not attempted" from "timestamp absent" — is the single highest-priority data quality fix before any production use of this model.
+
+### 4.4 Class Imbalance
 
 The dataset is approximately **99.70% no-FT and 0.30% FT**. This is a textbook severe imbalance. The `class_weight='balanced'` parameter adjusts the loss function to penalise misclassification of the minority class more heavily, giving the model a better chance of learning the FT signal despite its rarity.
 
 Even with this adjustment, the imbalance is severe enough that standard accuracy is a misleading headline metric. A model that predicts "no FT" for every lead achieves 99.70% accuracy while being completely useless for the business purpose.
 
-### 4.4 Model Performance
+### 4.5 Model Performance
 
 #### Classification Report
 
@@ -193,11 +208,11 @@ The two error types carry fundamentally different costs:
 
 **Threshold implication:** The optimal operating threshold is a business decision. If the cost of a wasted follow-up call is low and the value of a driver's first trip is high, the right move is to lower the decision threshold (accept more FPs to reduce FNs). If follow-up capacity is the binding constraint, the threshold should be raised to improve precision at the cost of some recall. The 0.5 default threshold used here is not necessarily the right one for this problem.
 
-### 4.5 Feature Importance
+### 4.6 Feature Importance
 
 | Feature | Importance | Interpretation |
 |---|---:|---|
-| upload_to_first_attempt_P50 (hrs) | 0.3189 | Speed of first follow-up after upload |
+| upload_to_first_attempt_P50 (hrs) | 0.3189 | Speed of first follow-up after upload *(see data quality note in §4.3)* |
 | leadsource_enc | 0.2918 | Which cohort the lead came from |
 | Attempt per Lead | 0.1676 | How many calls were made per lead |
 | Attempted | 0.1418 | Whether any call was attempted |
@@ -207,9 +222,9 @@ The two error types carry fundamentally different costs:
 
 **Together, speed-to-first-attempt and lead source account for ~61% of all predictive power.** The remaining features contribute meaningful but smaller marginal signal.
 
-### 4.6 Plain-English Driver Narrative
+### 4.7 Plain-English Driver Narrative
 
-**Speed to first attempt (0.319)** is the single most important predictor. Leads contacted quickly after upload are more likely to convert. This aligns with the behavioural intuition: a driver who has just registered their interest and receives a call within minutes is more engaged than one who receives a call days later. Every hour of delay after upload represents a decay in lead quality.
+**Speed to first attempt (0.319)** is the single most important predictor. Leads contacted quickly after upload are more likely to convert. This aligns with the behavioural intuition: a driver who has just registered their interest and receives a call within minutes is more engaged than one who receives a call days later. Every hour of delay after upload represents a decay in lead quality. *Note: this importance score is subject to the data quality caveats described in §4.3.*
 
 **Lead source / cohort (0.292)** is the second most important feature. Where a lead comes from is nearly as predictive as how fast you call them. This is fully consistent with Part 1 — some cohorts convert at nearly 1% while others convert at close to zero, and the model learns this signal from the data.
 
@@ -240,6 +255,7 @@ The three parts of this analysis tell a consistent story. Taken together, the re
 ### Current Limitations
 
 - **Severe class imbalance** — with only ~54 FT-positive leads in 18,198 records, the model is trained on very limited positive signal. Any performance metric should be interpreted with this in mind.
+- **`upload_to_first_attempt_P50 (hrs)` data quality** — 29% missing (median-imputed) and 8.2% negative (retained as-is). The top feature's importance score is inflated by corrupted values. Cleaning this column is the highest-priority pre-production fix.
 - **Random train/test split** — the current evaluation randomly assigns 25% of records to the test set. This may overestimate real-world performance if cohort characteristics change over time.
 - **Feature scope** — the model uses only the variables available in the dataset. Many plausible drivers of FT conversion are absent.
 
@@ -247,6 +263,7 @@ The three parts of this analysis tell a consistent story. Taken together, the re
 
 | Initiative | Expected Impact |
 |---|---|
+| Clean `upload_to_first_attempt_P50 (hrs)` — remove negatives, investigate missingness | Produce a trustworthy top feature; re-evaluate importance scores |
 | SMOTE or cost-sensitive oversampling | Improve recall on FT-positive leads |
 | Threshold tuning via precision-recall curve | Optimise operating point to business cost ratio |
 | Temporal train/test split (by upload date) | More honest out-of-sample evaluation |
